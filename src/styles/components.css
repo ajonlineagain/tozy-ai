@@ -1172,6 +1172,17 @@ textarea.input {
 
 /* ── Notification Toast ──────────────────────────────────── */
 
+#toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: var(--z-modal);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
 .toast {
   display: flex;
   align-items: center;
@@ -1180,16 +1191,33 @@ textarea.input {
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  animation: slide-in-right var(--duration-normal) var(--ease-out);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  animation: slide-in-right var(--duration-normal) ease-out;
   min-width: 280px;
   max-width: 420px;
+  pointer-events: all;
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
 }
 
+.toast.exit {
+  animation: fade-in var(--duration-normal) ease-out reverse forwards;
+}
+
+/* Match what showToast() sets as class names */
+.toast.bull    { border-left: 3px solid var(--bull); }
+.toast.bear    { border-left: 3px solid var(--bear); }
+.toast.accent  { border-left: 3px solid var(--accent); }
+.toast.warn,
+.toast.warning { border-left: 3px solid var(--warning); }
+
+/* Legacy aliases */
 .toast-success { border-left: 3px solid var(--bull); }
 .toast-error   { border-left: 3px solid var(--bear); }
 .toast-warning { border-left: 3px solid var(--warning); }
 .toast-info    { border-left: 3px solid var(--accent); }
+
 
 .toast .toast-message {
   flex: 1;

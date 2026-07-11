@@ -180,56 +180,41 @@ export async function mount(container) {
     document.getElementById('store-grid').innerHTML = renderStoreCards(storeItems, activeCategory);
   });
 
-  // Razorpay Standard Checkout Handler
-  container.addEventListener('click', async (e) => {
-    const payBtn = e.target.closest('.pay-btn');
-    if (!payBtn) return;
-
-    const price = parseInt(payBtn.dataset.price);
-    const strategyName = payBtn.dataset.name || 'TOZY.AI Subscription';
-
-    if (!price || isNaN(price) || price < 1) {
-      showToast('Invalid subscription price. Please try again.', 'bear');
-      return;
-    }
-
-    // Public Key ID — safe to use in frontend (this is NOT the secret)
-    const RAZORPAY_KEY = import.meta.env.VITE_RAZORPAY_KEY_ID || 'rzp_test_TCJwZH7ziKv0G4';
+  // Razorpay Standard Checkout — exposed as a global so onclick attrs can call it directly
+  window.tozyCheckout = async function(price, strategyName) {
+    const RAZORPAY_KEY = 'rzp_test_TCJwZH7ziKv0G4';
 
     if (!window.Razorpay) {
       showToast('Payment gateway not loaded. Please refresh the page.', 'bear');
       return;
     }
 
-    payBtn.disabled = true;
-    const originalText = payBtn.innerText;
-    payBtn.innerText = 'Initializing...';
+    if (!price || isNaN(price) || price < 1) {
+      showToast('Invalid subscription price.', 'bear');
+      return;
+    }
+
+    showToast('⏳ Initializing payment…', 'accent', 2000);
 
     try {
       // Step 1: Create Order via Serverless API
       let orderData;
-      try {
-        const response = await fetch('/api/create-order', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amount: price * 100, currency: 'INR' })
-        });
+      const response = await fetch('/api/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: price * 100, currency: 'INR' })
+      });
 
-        const raw = await response.text();
-        let parsed;
-        try { parsed = JSON.parse(raw); } catch { parsed = { error: raw || 'Server error' }; }
+      const raw = await response.text();
+      let parsed;
+      try { parsed = JSON.parse(raw); } catch { parsed = { error: raw || 'Server error' }; }
 
-        if (!response.ok) {
-          throw new Error(parsed.error || `Server error ${response.status}`);
-        }
-        orderData = parsed;
-      } catch (fetchErr) {
-        throw new Error('Order creation failed: ' + fetchErr.message);
+      if (!response.ok) {
+        throw new Error(parsed.error || `Server error ${response.status}`);
       }
+      orderData = parsed;
 
-      if (!orderData.order_id) {
-        throw new Error('Invalid order response from server.');
-      }
+      if (!orderData.order_id) throw new Error('Invalid order response from server.');
 
       // Step 2: Open Razorpay Web Checkout Modal
       const options = {
@@ -240,7 +225,6 @@ export async function mount(container) {
         description: `Subscription: ${strategyName}`,
         order_id: orderData.order_id,
         handler: async function (paymentResponse) {
-          payBtn.innerText = 'Verifying...';
           try {
             // Step 3: Verify signature on backend
             const verifyRes = await fetch('/api/verify-payment', {
@@ -262,10 +246,7 @@ export async function mount(container) {
               showToast('Verification failed: ' + (verifyData.error || 'Unknown error'), 'bear');
             }
           } catch (verifyErr) {
-            showToast('Verification request error: ' + verifyErr.message, 'bear');
-          } finally {
-            payBtn.disabled = false;
-            payBtn.innerText = originalText;
+            showToast('Verification error: ' + verifyErr.message, 'bear');
           }
         },
         prefill: { name: 'TOZY.AI Chartist', email: 'user@tozy.ai' },
@@ -273,26 +254,21 @@ export async function mount(container) {
         modal: {
           ondismiss: function () {
             showToast('Payment cancelled.', 'warn');
-            payBtn.disabled = false;
-            payBtn.innerText = originalText;
           }
         }
       };
 
       const rzp = new window.Razorpay(options);
       rzp.on('payment.failed', function (resp) {
-        showToast('Payment failed: ' + (resp.error?.description || 'Unknown error'), 'bear');
-        payBtn.disabled = false;
-        payBtn.innerText = originalText;
+        showToast('Payment failed: ' + (resp.error?.description || 'Unknown'), 'bear');
       });
       rzp.open();
 
     } catch (err) {
       showToast('❌ ' + (err.message || 'Could not start payment.'), 'bear', 5000);
-      payBtn.disabled = false;
-      payBtn.innerText = originalText;
     }
-  });
+  };
+
 
 
 
@@ -393,7 +369,7 @@ function renderStoreCards(items, category) {
             <span style="font-family:var(--font-mono);font-weight:700;color:var(--text-primary);">₹${item.price}</span>
             <span style="font-size:10px;color:var(--text-muted);">/mo</span>
           </div>
-          <button class="btn btn-primary btn-sm pay-btn" data-price="${item.price}" data-name="${item.name}" style="font-size:10px;">Subscribe</button>
+          <button class="btn btn-primary btn-sm pay-btn" onclick="window.tozyCheckout(${item.price}, '${item.name.replace(/'/g, '&#39;')}')" style="font-size:10px;">Subscribe</button>
         </div>
         <div style="font-size:9px;color:var(--text-muted);margin-top:6px;">${item.subscribers.toLocaleString()} subscribers</div>
       </div>
