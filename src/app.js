@@ -446,14 +446,68 @@ async function initAuth() {
   const { data } = await supabase.auth.getSession();
   authSession = data.session;
   
-  supabase.auth.onAuthStateChange((event, session) => {
+  supabase.auth.onAuthStateChange(async (event, session) => {
     authSession = session;
     if (!session) showAuthModal();
-    else hideAuthModal();
+    else {
+      hideAuthModal();
+      await syncUserProfile(session.user);
+    }
   });
 
   if (!authSession) {
     showAuthModal();
+  } else {
+    syncUserProfile(authSession.user);
+  }
+}
+
+async function syncUserProfile(user) {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (!data) {
+      // Create new profile with mock default metrics
+      const { error: insertError } = await supabase
+        .from('profiles')
+        .insert({
+          id: user.id,
+          username: (user.email ? user.email.split('@')[0] : 'user') + Math.floor(Math.random() * 1000),
+          full_name: user.user_metadata?.full_name || 'Anonymous Chartist',
+          profile_tier: 'Traders',
+          verified_balance: 50000.00,
+          win_streak_days: 3,
+          win_percentage: 62.50
+        });
+      if (insertError) throw insertError;
+
+      // Also insert a default broker ledger row
+      await supabase.from('broker_ledgers').insert({
+        user_id: user.id,
+        broker_name: 'Zerodha Kite',
+        account_id: 'DEMAT-' + Math.floor(100 + Math.random() * 900),
+        realized_pnl: 12400.00,
+        verification_hash: 'sha256:8f2a9c3d4f107b5e824c6a8f1d2e'
+      });
+
+      // And a default technical crossing
+      await supabase.from('technical_crossings').insert({
+        user_id: user.id,
+        ticker_symbol: 'NIFTY 50',
+        study_type: 'EMA_200_CROSS',
+        direction: 'BULLISH_BIAS',
+        risk_boundary: 24350.00,
+        liquidity_target: 24700.00
+      });
+    }
+  } catch (e) {
+    console.error('Failed to sync user profile:', e);
   }
 }
 

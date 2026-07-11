@@ -1,15 +1,27 @@
-/**
- * TOZY.AI — Page 6: Creator Store & Multi-Account Manager
- * Performance dashboard, marketplace, strategy replication
- */
-
 import { generateCreatorStoreItems } from '../data/mock-market.js';
 import { showToast } from '../lib/toast.js';
+import { supabase } from '../lib/supabase.js';
 
 let activeCategory = 'All';
 
-export function mount(container) {
+export async function mount(container) {
   const storeItems = generateCreatorStoreItems();
+  const { data: { session } } = await supabase.auth.getSession();
+  
+  let dbProfile = null;
+  let dbLedgers = [];
+  
+  if (session) {
+    const { data: profile } = await supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
+    dbProfile = profile;
+    const { data: ledgers } = await supabase.from('broker_ledgers').select('*').eq('user_id', session.user.id);
+    dbLedgers = ledgers || [];
+  }
+
+  // Fallbacks if not logged in or sync delayed
+  const balance = dbProfile ? `₹${parseFloat(dbProfile.verified_balance).toLocaleString('en-IN')}` : '₹50,000';
+  const winRate = dbProfile ? `${parseFloat(dbProfile.win_percentage).toFixed(1)}%` : '68.2%';
+  const winStreak = dbProfile ? `${dbProfile.win_streak_days} days` : '3 days';
 
   container.innerHTML = `
     <div class="page-header">
@@ -34,12 +46,12 @@ export function mount(container) {
       </div>
       <div class="grid-3" style="grid-template-columns:repeat(6,1fr);margin-bottom:16px;">
         <div class="metric-card">
-          <div class="metric-label">Total Returns</div>
-          <div class="metric-value" style="color:var(--bull);">+34.7%</div>
+          <div class="metric-label">Verified Capital</div>
+          <div class="metric-value" style="color:var(--bull);">${balance}</div>
         </div>
         <div class="metric-card">
           <div class="metric-label">Win Rate</div>
-          <div class="metric-value" style="color:var(--bull);">68.2%</div>
+          <div class="metric-value" style="color:var(--bull);">${winRate}</div>
         </div>
         <div class="metric-card">
           <div class="metric-label">Max Drawdown</div>
@@ -50,8 +62,8 @@ export function mount(container) {
           <div class="metric-value" style="color:var(--accent);">2.14</div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">Total Trades</div>
-          <div class="metric-value">1,247</div>
+          <div class="metric-label">Win Streak</div>
+          <div class="metric-value">${winStreak}</div>
         </div>
         <div class="metric-card">
           <div class="metric-label">Avg Holding</div>
@@ -95,7 +107,7 @@ export function mount(container) {
             <th>P&L Today</th><th>Risk Boundary</th><th>Liquidity Target</th><th>Status</th><th>Actions</th>
           </tr></thead>
           <tbody>
-            ${renderAccountRows()}
+            ${renderAccountRows(dbLedgers)}
           </tbody>
         </table>
       </div>
@@ -273,8 +285,18 @@ function renderStoreCards(items, category) {
   }).join('');
 }
 
-function renderAccountRows() {
-  const accounts = [
+function renderAccountRows(dbLedgers = []) {
+  const accounts = dbLedgers.length ? dbLedgers.map(l => ({
+    id: l.account_id,
+    broker: l.broker_name,
+    capital: 500000,
+    strategy: 'Nifty Sniper Pro',
+    pnl: parseFloat(l.realized_pnl),
+    sl: 24350,
+    target: 24700,
+    status: 'Running',
+    online: true
+  })) : [
     { id: 'DEMAT-001', broker: 'Zerodha Kite', capital: 500000, strategy: 'Nifty Sniper Pro', pnl: 12400, sl: 24350, target: 24700, status: 'Running', online: true },
     { id: 'DEMAT-002', broker: 'DhanHQ', capital: 300000, strategy: 'OI Flow Scanner', pnl: 8200, sl: 24350, target: 24700, status: 'Running', online: true },
     { id: 'DEMAT-003', broker: 'Kotak Neo', capital: 250000, strategy: 'Nifty Sniper Pro', pnl: -3100, sl: 24350, target: 24700, status: 'Paused', online: true },
