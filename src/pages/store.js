@@ -186,41 +186,63 @@ export async function mount(container) {
     if (!payBtn) return;
 
     const price = parseInt(payBtn.dataset.price);
-    const strategyName = payBtn.dataset.name;
+    const strategyName = payBtn.dataset.name || 'TOZY.AI Subscription';
 
-    if (isNaN(price)) return;
+    if (!price || isNaN(price) || price < 1) {
+      showToast('Invalid subscription price. Please try again.', 'bear');
+      return;
+    }
+
+    // Public Key ID — safe to use in frontend (this is NOT the secret)
+    const RAZORPAY_KEY = import.meta.env.VITE_RAZORPAY_KEY_ID || 'rzp_test_TCJwZH7ziKv0G4';
+
+    if (!window.Razorpay) {
+      showToast('Payment gateway not loaded. Please refresh the page.', 'bear');
+      return;
+    }
 
     payBtn.disabled = true;
     const originalText = payBtn.innerText;
     payBtn.innerText = 'Initializing...';
 
     try {
-      // Step 1: Call Create Order Endpoint
-      const response = await fetch('/api/create-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: price * 100, currency: 'INR' }) // Price in paise
-      });
+      // Step 1: Create Order via Serverless API
+      let orderData;
+      try {
+        const response = await fetch('/api/create-order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amount: price * 100, currency: 'INR' })
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create payment order.');
+        const raw = await response.text();
+        let parsed;
+        try { parsed = JSON.parse(raw); } catch { parsed = { error: raw || 'Server error' }; }
+
+        if (!response.ok) {
+          throw new Error(parsed.error || `Server error ${response.status}`);
+        }
+        orderData = parsed;
+      } catch (fetchErr) {
+        throw new Error('Order creation failed: ' + fetchErr.message);
       }
 
-      const orderData = await response.json();
+      if (!orderData.order_id) {
+        throw new Error('Invalid order response from server.');
+      }
 
       // Step 2: Open Razorpay Web Checkout Modal
       const options = {
-        key: import.meta.env.VITE_RAZORPAY_KEY_ID,
+        key: RAZORPAY_KEY,
         amount: orderData.amount,
-        currency: orderData.currency,
+        currency: orderData.currency || 'INR',
         name: 'TOZY.AI Platform',
         description: `Subscription: ${strategyName}`,
         order_id: orderData.order_id,
         handler: async function (paymentResponse) {
           payBtn.innerText = 'Verifying...';
           try {
-            // Step 3: Verify Payment Signature
+            // Step 3: Verify signature on backend
             const verifyRes = await fetch('/api/verify-payment', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -230,31 +252,27 @@ export async function mount(container) {
                 razorpay_signature: paymentResponse.razorpay_signature
               })
             });
-
-            const verifyData = await verifyRes.json();
+            const verifyRaw = await verifyRes.text();
+            let verifyData;
+            try { verifyData = JSON.parse(verifyRaw); } catch { verifyData = { error: verifyRaw }; }
 
             if (verifyRes.ok && verifyData.status === 'success') {
-              showToast('Payment verified successfully! Access granted.', 'bull');
+              showToast('✅ Payment verified! Access granted.', 'bull', 5000);
             } else {
-              showToast(`Verification Failed: ${verifyData.error || 'Invalid signature'}`, 'bear');
+              showToast('Verification failed: ' + (verifyData.error || 'Unknown error'), 'bear');
             }
-          } catch (verifErr) {
-            showToast('Signature verification error.', 'bear');
+          } catch (verifyErr) {
+            showToast('Verification request error: ' + verifyErr.message, 'bear');
           } finally {
             payBtn.disabled = false;
             payBtn.innerText = originalText;
           }
         },
-        prefill: {
-          name: 'TOZY.AI Chartist',
-          email: 'user@tozy.ai'
-        },
-        theme: {
-          color: '#8B5CF6'
-        },
+        prefill: { name: 'TOZY.AI Chartist', email: 'user@tozy.ai' },
+        theme: { color: '#8B5CF6' },
         modal: {
           ondismiss: function () {
-            showToast('Payment cancelled by user.', 'warn');
+            showToast('Payment cancelled.', 'warn');
             payBtn.disabled = false;
             payBtn.innerText = originalText;
           }
@@ -263,18 +281,20 @@ export async function mount(container) {
 
       const rzp = new window.Razorpay(options);
       rzp.on('payment.failed', function (resp) {
-        showToast(`Payment failed: ${resp.error.description}`, 'bear');
+        showToast('Payment failed: ' + (resp.error?.description || 'Unknown error'), 'bear');
         payBtn.disabled = false;
         payBtn.innerText = originalText;
       });
       rzp.open();
 
     } catch (err) {
-      showToast(err.message || 'Error starting transaction.', 'bear');
+      showToast('❌ ' + (err.message || 'Could not start payment.'), 'bear', 5000);
       payBtn.disabled = false;
       payBtn.innerText = originalText;
     }
   });
+
+
 
   // Token Bucket OPS Queue
   class TokenBucket {
