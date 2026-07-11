@@ -180,6 +180,102 @@ export async function mount(container) {
     document.getElementById('store-grid').innerHTML = renderStoreCards(storeItems, activeCategory);
   });
 
+  // Razorpay Standard Checkout Handler
+  container.addEventListener('click', async (e) => {
+    const payBtn = e.target.closest('.pay-btn');
+    if (!payBtn) return;
+
+    const price = parseInt(payBtn.dataset.price);
+    const strategyName = payBtn.dataset.name;
+
+    if (isNaN(price)) return;
+
+    payBtn.disabled = true;
+    const originalText = payBtn.innerText;
+    payBtn.innerText = 'Initializing...';
+
+    try {
+      // Step 1: Call Create Order Endpoint
+      const response = await fetch('/api/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: price * 100, currency: 'INR' }) // Price in paise
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create payment order.');
+      }
+
+      const orderData = await response.json();
+
+      // Step 2: Open Razorpay Web Checkout Modal
+      const options = {
+        key: import.meta.env.VITE_RAZORPAY_KEY_ID,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        name: 'TOZY.AI Platform',
+        description: `Subscription: ${strategyName}`,
+        order_id: orderData.order_id,
+        handler: async function (paymentResponse) {
+          payBtn.innerText = 'Verifying...';
+          try {
+            // Step 3: Verify Payment Signature
+            const verifyRes = await fetch('/api/verify-payment', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                razorpay_order_id: paymentResponse.razorpay_order_id,
+                razorpay_payment_id: paymentResponse.razorpay_payment_id,
+                razorpay_signature: paymentResponse.razorpay_signature
+              })
+            });
+
+            const verifyData = await verifyRes.json();
+
+            if (verifyRes.ok && verifyData.status === 'success') {
+              showToast('Payment verified successfully! Access granted.', 'bull');
+            } else {
+              showToast(`Verification Failed: ${verifyData.error || 'Invalid signature'}`, 'bear');
+            }
+          } catch (verifErr) {
+            showToast('Signature verification error.', 'bear');
+          } finally {
+            payBtn.disabled = false;
+            payBtn.innerText = originalText;
+          }
+        },
+        prefill: {
+          name: 'TOZY.AI Chartist',
+          email: 'user@tozy.ai'
+        },
+        theme: {
+          color: '#8B5CF6'
+        },
+        modal: {
+          ondismiss: function () {
+            showToast('Payment cancelled by user.', 'warn');
+            payBtn.disabled = false;
+            payBtn.innerText = originalText;
+          }
+        }
+      };
+
+      const rzp = new window.Razorpay(options);
+      rzp.on('payment.failed', function (resp) {
+        showToast(`Payment failed: ${resp.error.description}`, 'bear');
+        payBtn.disabled = false;
+        payBtn.innerText = originalText;
+      });
+      rzp.open();
+
+    } catch (err) {
+      showToast(err.message || 'Error starting transaction.', 'bear');
+      payBtn.disabled = false;
+      payBtn.innerText = originalText;
+    }
+  });
+
   // Token Bucket OPS Queue
   class TokenBucket {
     constructor(capacity, fillPerSecond) {
@@ -277,7 +373,7 @@ function renderStoreCards(items, category) {
             <span style="font-family:var(--font-mono);font-weight:700;color:var(--text-primary);">₹${item.price}</span>
             <span style="font-size:10px;color:var(--text-muted);">/mo</span>
           </div>
-          <button class="btn btn-primary btn-sm" style="font-size:10px;">Subscribe</button>
+          <button class="btn btn-primary btn-sm pay-btn" data-price="${item.price}" data-name="${item.name}" style="font-size:10px;">Subscribe</button>
         </div>
         <div style="font-size:9px;color:var(--text-muted);margin-top:6px;">${item.subscribers.toLocaleString()} subscribers</div>
       </div>
