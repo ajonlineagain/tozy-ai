@@ -439,7 +439,109 @@ function init() {
   console.log('%c⌨ Shortcuts: 1-6 = pages · W = watchlist · Esc = close modal', 'color:#6B7280;font-size:11px;');
 
   initAuth();
+
+  // ─── Global Payment Handler (Event Delegation) ─────────────────────────────
+  // Bound ONCE to document.body at boot. Survives all SPA page navigations.
+  // Detects .buy-button clicks dynamically regardless of when they are painted.
+  document.body.addEventListener('click', async function handleBuyButton(e) {
+    const btn = e.target.closest('.buy-button');
+    if (!btn) return;
+
+    const price = parseInt(btn.dataset.price, 10);
+    const name  = btn.dataset.name || 'TOZY.AI Subscription';
+
+    if (!price || isNaN(price) || price < 1) {
+      showToast('Invalid subscription price.', 'bear');
+      return;
+    }
+
+    if (!window.Razorpay) {
+      showToast('Payment gateway not loaded. Please refresh and try again.', 'bear');
+      return;
+    }
+
+    // Disable button for the duration of the request
+    const originalLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Initializing…';
+    showToast('⏳ Preparing checkout…', 'accent', 2500);
+
+    const restore = () => {
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    };
+
+    try {
+      // Step 1 — Create order via Vercel Serverless Function
+      const res  = await fetch('/api/create-subscription', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ amount: price * 100, currency: 'INR' }),
+      });
+
+      let order;
+      try { order = await res.json(); }
+      catch { throw new Error(`Server returned non-JSON (status ${res.status})`); }
+
+      if (!res.ok) throw new Error(order.error || `Server error ${res.status}`);
+      if (!order.order_id) throw new Error('Server response missing order_id.');
+
+      // Step 2 — Open Razorpay modal
+      const rzp = new window.Razorpay({
+        key:         'rzp_test_TCJwZH7ziKv0G4',
+        amount:      order.amount,
+        currency:    order.currency || 'INR',
+        name:        'TOZY.AI Platform',
+        description: `Subscription: ${name}`,
+        order_id:    order.order_id,
+        theme:       { color: '#8B5CF6' },
+        prefill:     { name: 'TOZY.AI Chartist', email: 'chartist@tozy.ai' },
+        modal: {
+          ondismiss: () => { showToast('Payment cancelled.', 'warn'); restore(); }
+        },
+        handler: async function (payment) {
+          // Step 3 — Verify signature server-side
+          try {
+            const vRes  = await fetch('/api/verify-payment', {
+              method:  'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({
+                razorpay_order_id:   payment.razorpay_order_id,
+                razorpay_payment_id: payment.razorpay_payment_id,
+                razorpay_signature:  payment.razorpay_signature,
+              }),
+            });
+            let vData;
+            try { vData = await vRes.json(); } catch { vData = { error: 'Unparseable response' }; }
+
+            if (vRes.ok && vData.status === 'success') {
+              showToast('✅ Payment verified! Subscription activated.', 'bull', 6000);
+            } else {
+              showToast('Verification failed: ' + (vData.error || 'Unknown'), 'bear');
+            }
+          } catch (vErr) {
+            showToast('Verification error: ' + vErr.message, 'bear');
+          } finally {
+            restore();
+          }
+        },
+      });
+
+      rzp.on('payment.failed', function (resp) {
+        showToast('Payment failed: ' + (resp.error?.description || 'Unknown'), 'bear');
+        restore();
+      });
+
+      rzp.open();
+
+    } catch (err) {
+      showToast('❌ ' + (err.message || 'Could not start payment.'), 'bear', 5000);
+      restore();
+    }
+  });
+  // ───────────────────────────────────────────────────────────────────────────
 }
+
 
 // ─── Supabase Auth ───
 async function initAuth() {
